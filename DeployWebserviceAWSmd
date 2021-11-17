@@ -155,6 +155,19 @@ eksctl create iamidentitymapping --cluster eks-webservice --arn ${rolearn} --gro
 
 # 3. 정보 확인
 kubectl describe configmap -n kube-system aws-auth
+
+# 3-1. assumedrolename이 있을 때 주의사항
+```bash
+kubectl edit -n kube-system configmap/aws-auth
+
+# rolearn 항목에서 role뒤에 /aws-reserved/sso.amazonaws.com/ap-northeast-2 이거 지우기 -> 이름만 남기기
+# https://docs.aws.amazon.com/eks/latest/userguide/troubleshooting_iam.html페이지의
+# aws-auth ConfigMap does not grant access to the cluster항목 참조
+```
+
+rolearn: arn:aws:iam::458446241212:role/aws-reserved/sso.amazonaws.com/ap-northeast-2/AWSReservedSSO_Admin_9b096e01b9de3255
+
+
 ```
 
 ### 10. [ALB설정 - Ingress앞에 로드밸런서](https://aws-eks-web-application.workshop.aws/ko/60-ingress-controller.html)
