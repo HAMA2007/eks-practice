@@ -3,19 +3,23 @@ kind: ClusterConfig
 
 metadata:
   name: eks-test # 생성할 EKS 클러스터명
-  region: ${AWS_REGION} # 클러스터를 생성할 리젼
+  region: ap-northeast-2 # 클러스터를 생성할 리젼
   version: "1.21"
 
 vpc:
-  id: "" # 기존에 있는 연결할 VPC id
-  cidr: "192.168.0.0/22" # 클러스터에서 사용할 VPC의 CIDR
+  id: "vpc-086988e7990233c14" # 기존에 있는 연결할 VPC id
+  cidr: "10.10.0.0/16" # 클러스터에서 사용할 VPC의 CIDR
   subnets:
-    private:
-      test-sn1:
-        id: ""
     public:
+      test-sn1:
+        id: "subnet-0b966a37864281e09"
       test-sn2:
-        id: ""
+        id: "subnet-0a8424b12954b7e5c"
+    private:
+      test-sn3:
+        id: "subnet-0d491031e37972958"
+      test-sn4:
+        id: "subnet-03999e05583fbe880"
 
 managedNodeGroups:
   - name: ng-1 # 클러스터의 노드 그룹명
