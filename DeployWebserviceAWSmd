@@ -1,0 +1,363 @@
+# Deploy Webservice with AWS (for AWS Cloud9. v211113)
+
+## [EKS로 웹 애플리케이션 구축하기](https://aws-eks-web-application.workshop.aws/ko/20-preq/100-account.html)
+
+### 1. [최초 세팅 - AWS CLI](https://docs.aws.amazon.com/ko_kr/cli/latest/userguide/cli-configure-files.html)
+```bash
+aws configure
+
+AWS Access Key ID [None] AKIA2XYNILTGXMVO6UVX
+AWS Secret Access Key [None]: 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
+Default region name [None]: ap-northeast-2
+Default output format [None]: json
+```
+
+### [LOCAL용 - EKS 세팅](https://aws.amazon.com/ko/premiumsupport/knowledge-center/eks-cluster-connection/)
+```bash
+aws sts get-caller-identity
+
+aws eks --region ap-northeast-2 update-kubeconfig --name webservice-cluster
+
+kubectl get svc -> 최종확인 가능
+```
+
+### 2. [Cloud9 IDE](https://aws-eks-web-application.workshop.aws/ko/30-setting/100-aws-cloud9.html)
+
+### 3. [Kubectl 설치 1.21]()
+```bash
+sudo curl -o /usr/local/bin/kubectl  \
+   https://amazon-eks.s3.us-west-2.amazonaws.com/1.21.2/2021-07-05/bin/linux/amd64/kubectl
+
+sudo chmod +x /usr/local/bin/kubectl
+
+# 버전 확인용 명령어
+kubectl version --client=true --short=true
+
+# 출력되는 결과 값
+# Client Version: v1.21.2-13+d2965f0db10712
+```
+
+### 4. [Jq, bash-completion 설치하기](https://aws-eks-web-application.workshop.aws/ko/30-setting/400-etc.html)
+```bash
+sudo yum install -y jq
+sudo yum install -y bash-completion
+```
+
+### 5. [eksctl 설치하기](https://aws-eks-web-application.workshop.aws/ko/30-setting/500-eksctl.html)
+```bash
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+sudo mv -v /tmp/eksctl /usr/local/bin
+
+# 정상 설치 확인용 명령어
+eksctl version
+```
+
+### 6. [Cloud9에 리전 등록 및 계정ID환경 변수 등록](https://aws-eks-web-application.workshop.aws/ko/30-setting/600-cloud9-addition.html)
+```bash
+# 리전 등록
+export AWS_REGION=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.region')
+echo "export AWS_REGION=${AWS_REGION}" | tee -a ~/.bash_profile
+aws configure set default.region ${AWS_REGION}
+
+# 리전 등록 확인 명령어
+aws configure get default.region
+
+# ----------------- #
+# 계정 ID 환경변수 등록
+export ACCOUNT_ID=$(curl -s 169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.accountId')
+echo "export ACCOUNT_ID=${ACCOUNT_ID}" | tee -a ~/.bash_profile
+
+# ----------------- #
+# 디스크 사이즈 증설 스크립트(도커 빌드시 용량 부족 차단)
+wget https://gist.githubusercontent.com/joozero/b48ee68e2174a4f1ead93aaf2b582090/raw/2dda79390a10328df66e5f6162846017c682bef5/resize.sh
+sh resize.sh
+
+# 적용 확인용 명령어
+df -h
+```
+
+### 7. [ECR 세팅 공홈](https://docs.aws.amazon.com/ko_kr/AmazonECR/latest/userguide/getting-started-cli.html)
+### 7. [ECR Repository 생성 및 Push](https://aws-eks-web-application.workshop.aws/ko/40-container/200-eks.html)
+```bash
+# repository-name 변경 가능
+aws ecr create-repository \
+--repository-name webservice-back \
+--image-scanning-configuration scanOnPush=true \
+--region ${AWS_REGION}
+
+# CLI 로그인
+aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+# Docker Image 이름 설정
+docker tag webservice-back:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/webservice-back:latest
+Docker Image 이름 -> 738225315021.dkr.ecr.ap-northeast-2.amazonaws.com/webservice-back:1.0.0
+
+# Image Push
+docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/webservice-back:latest
+```
+
+### 8. [eksctl로 EKS Cluster 생성](https://aws-eks-web-application.workshop.aws/ko/50-eks-cluster/100-launch-cluster.html)
+
+```yaml
+cat << EOF > eks-webservice-cluster.yaml
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: eks-webservice # 생성할 EKS 클러스터명
+  region: ${AWS_REGION} # 클러스터를 생성할 리젼
+  version: "1.21"
+
+vpc:
+  cidr: "192.168.0.0/16" # 클러스터에서 사용할 VPC의 CIDR
+
+managedNodeGroups:
+  - name: node-group # 클러스터의 노드 그룹명
+    instanceType: m5.large # 클러스터 워커 노드의 인스턴스 타입
+    desiredCapacity: 3 # 클러스터 워커 노드의 갯수
+    volumeSize: 10  # 클러스터 워커 노드의 EBS 용량 (단위: GiB)
+    ssh:
+      enableSsm: true
+    iam:
+      withAddonPolicies:
+        imageBuilder: true # AWS ECR에 대한 권한 추가
+        # albIngress: true  # albIngress에 대한 권한 추가
+        cloudWatch: true # cloudWatch에 대한 권한 추가
+        autoScaler: true # auto scaling에 대한 권한 추가
+
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["*"]
+EOF
+```
+
+```bash
+# 1. 클러스터 생성
+eksctl create cluster -f eks-webservice-cluster.yaml
+
+# 2. 배포 확인(생성후 15~20분 정도 소요)
+kubectl get nodes
+```
+
+### 9. [Console(웹페이지) Credential추가](https://aws-eks-web-application.workshop.aws/ko/50-eks-cluster/200-option-console.html)
+```bash
+# 1. role ARN 정의
+rolearn=$(aws cloud9 describe-environment-memberships --environment-id=$C9_PID | jq -r '.memberships[].userArn')
+echo ${rolearn}
+
+# assumed-role이 있을 경우에 한정 실행
+assumedrolename=$(echo ${rolearn} | awk -F/ '{print $(NF-1)}')
+rolearn=$(aws iam get-role --role-name ${assumedrolename} --query Role.Arn --output text) 
+
+# 2. identity 맵핑
+eksctl create iamidentitymapping --cluster eks-webservice --arn ${rolearn} --group system:masters --username admin
+
+# 3. 정보 확인
+kubectl describe configmap -n kube-system aws-auth
+```
+
+### 10. [ALB설정 - Ingress앞에 로드밸런서](https://aws-eks-web-application.workshop.aws/ko/60-ingress-controller.html)
+```bash
+# 1. 폴더 생성
+cd ~/environment
+mkdir -p manifests/alb-controller && cd manifests/alb-controller
+# 최종 폴더 위치
+/home/ec2-user/environment/manifests/alb-controller
+
+# 2. IAM OIDC identity Provider 생성
+eksctl utils associate-iam-oidc-provider \
+    --region ${AWS_REGION} \
+    --cluster eks-webservice \
+    --approve
+
+# 잘 생성 되었는지 확인
+aws eks describe-cluster --name eks-webservice --query "cluster.identity.oidc.issuer" --output text
+# -> https://oidc.eks.ap-northeast-2.amazonaws.com/id/8A6E78112D7F1C4DC352B1B511DD13CF
+# 뒤에 Id부분을 복사해서 아래 실행 -> 잘 출력되면 성공
+aws iam list-open-id-connect-providers | grep 8A6E78112D7F1C4DC352B1B511DD13CF
+
+# 3. IAM Policy 생성
+aws iam create-policy \
+    --policy-name AWSLoadBalancerControllerIAMPolicy \
+    --policy-document https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+
+# 4. ServiceAccount 생성
+eksctl create iamserviceaccount \
+    --cluster eks-webservice \
+    --namespace kube-system \
+    --name aws-load-balancer-controller \
+    --attach-policy-arn arn:aws:iam::$ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy \
+    --override-existing-serviceaccounts \
+    --approve
+```
+```bash
+# 5. cert-manager 설치
+kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.4.1/cert-manager.yaml
+
+# 6. Load balancer controller yaml 다운로드
+wget https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.2.1/docs/install/v2_2_1_full.yaml
+
+# 6-1. yaml파일 수정(cluster name 변경)
+spec:
+  containers:
+    - args:
+        - --cluster-name=eks-webservice # 생성한 클러스터 이름을 입력
+        - --ingress-class=alb
+      image: amazon/aws-alb-ingress-controller:v2.2.0
+
+# 6-2. 앞에서 ServiceAccount생성했기 때문에, 아래 내용 삭제
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: aws-load-balancer-controller
+name: aws-load-balancer-controller
+namespace: kube-system
+
+# 7. 배포
+kubectl apply -f v2_2_1_full.yaml
+
+# 8. 배포 확인
+kubectl get deployment -n kube-system aws-load-balancer-controller
+kubectl get sa aws-load-balancer-controller -n kube-system -o yaml
+kubectl logs -n kube-system $(kubectl get po -n kube-system | egrep -o "aws-load-balancer[a-zA-Z0-9-]+")
+ALBPOD=$(kubectl get pod -n kube-system | egrep -o "aws-load-balancer[a-zA-Z0-9-]+")
+kubectl describe pod -n kube-system ${ALBPOD}
+```
+
+### 11. [Backend 배포](https://aws-eks-web-application.workshop.aws/ko/70-deploy-service/100-flask-backend.html)
+```bash
+# 1. manifest폴더로 이동
+cd ~/environment/manifests/
+```
+```yaml
+# 2. Deploy Manifest
+cat <<EOF> backend-deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webservice-back
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webservice-back
+  template:
+    metadata:
+      labels:
+        app: webservice-back
+    spec:
+      containers:
+        - name: webservice-back
+          image: $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/webservice-back:latest
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: secret
+              mountPath: /webservice-back/secret
+          ports:
+            - name: http
+              containerPort: 13031
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /alive
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /alive
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+            limits:
+              cpu: 500m
+          envFrom:
+            - configMapRef:
+                name: webservice-back
+      volumes:
+        - name: secret
+          secret:
+            secretName: api-secret
+EOF
+```
+
+```yaml
+# 3. Service Manifest
+cat <<EOF> backend-service.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webservice-back
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: "/alive"
+spec:
+  selector:
+     app: webservice-back
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 13031
+      protocol: TCP
+EOF
+```
+
+```yaml
+# 4. Ingress Manifest
+cat <<EOF> ingress.yaml
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: "backend-ingress"
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /api1/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: "webservice-back"
+                port:
+                  number: 13031
+          # - path: /services
+          #   pathType: Prefix
+          #   backend:  
+          #     service:
+          #       name: "demo-nodejs-backend"
+          #       port:
+          #         number: 8080
+          - path: /*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: "demo-frontend"
+                port:
+                  number: 80
+EOF
+```
+
+```bash
+# 5. apply all
+kubectl apply -f backend-deployment.yaml
+kubectl apply -f backend-service.yaml
+kubectl apply -f ingress.yaml
+
+# 6. 웹페이지 확인 -> 명령어 치고 나오는 주소로 접속해보기
+echo http://$(kubectl get ingress/backend-ingress -o jsonpath='{.status.loadBalancer.ingress[*].hostname}')/contents/aws
+```
