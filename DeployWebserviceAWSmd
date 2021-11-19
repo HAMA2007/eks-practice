@@ -181,11 +181,11 @@ mkdir -p manifests/alb-controller && cd manifests/alb-controller
 # 2. IAM OIDC identity Provider 생성
 eksctl utils associate-iam-oidc-provider \
     --region ${AWS_REGION} \
-    --cluster eks-webservice \
+    --cluster eks-test \
     --approve
 
 # 잘 생성 되었는지 확인
-aws eks describe-cluster --name eks-webservice --query "cluster.identity.oidc.issuer" --output text
+aws eks describe-cluster --name eks-test --query "cluster.identity.oidc.issuer" --output text
 # -> https://oidc.eks.ap-northeast-2.amazonaws.com/id/8A6E78112D7F1C4DC352B1B511DD13CF
 # 뒤에 Id부분을 복사해서 아래 실행 -> 잘 출력되면 성공
 aws iam list-open-id-connect-providers | grep 8A6E78112D7F1C4DC352B1B511DD13CF
@@ -197,7 +197,7 @@ aws iam create-policy \
 
 # 4. ServiceAccount 생성
 eksctl create iamserviceaccount \
-    --cluster eks-webservice \
+    --cluster eks-test \
     --namespace kube-system \
     --name aws-load-balancer-controller \
     --attach-policy-arn arn:aws:iam::$ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy \
