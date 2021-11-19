@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uplus-backtest2
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: uplus-backtest2
+  template:
+    metadata:
+      labels:
+        app: uplus-backtest2
+    spec:
+      containers:
+        - name: uplus-backtest2
+          image: docker.io/helios1127/uplus_backtest2:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /alive
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /alive
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 250m
+            limits:
+              cpu: 500m
